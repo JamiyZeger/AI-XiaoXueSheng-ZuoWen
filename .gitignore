@@ -1,0 +1,9 @@
+# 回归测试截图（本地产物，不入库）
+test/*.png
+
+# macOS
+.DS_Store
+
+# 本地配置/临时文件
+*.local
+__pycache__/
