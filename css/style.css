@@ -119,6 +119,7 @@ main {
 
 /* 卡片 */
 .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.cards.three { grid-template-columns: repeat(3, 1fr); }
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -411,6 +412,89 @@ main {
 .mark-group.active path { stroke-width: 3.6; }
 .mark-group.dim { opacity: 0.18; }
 
+/* ===== 作业纸批改：照片 + 批注叠加 ===== */
+.photo-stack { display: flex; flex-direction: column; gap: 16px; max-width: 860px; }
+.photo-wrap {
+  position: relative;
+  display: block;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  line-height: 0;
+  box-shadow: 0 2px 10px rgba(90, 70, 40, 0.07);
+}
+.photo-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.photo-marks {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.photo-marks .mark-group { pointer-events: auto; }
+.photo-marks .mark-group:hover path { stroke-width: 3.2; }
+.photo-badge {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  background: rgba(31, 42, 68, 0.72);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* 作业纸照片缩略图（多页管理） */
+.hw-thumbs { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.hw-thumb {
+  position: relative;
+  width: 132px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.hw-thumb img { width: 100%; height: 96px; object-fit: cover; display: block; }
+.hw-thumb .pg {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  background: rgba(31, 42, 68, 0.72);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+.hw-thumb .ops {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  justify-content: center;
+}
+.hw-thumb .mini {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  width: 34px;
+  height: 24px;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.hw-thumb .mini:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.hw-thumb .mini:disabled { opacity: 0.35; cursor: default; }
+.hw-thumb .mini.del:hover { border-color: #D85A30; color: #D85A30; }
+
 .marks-wrap {
   position: absolute;
   left: 0;
@@ -654,7 +738,7 @@ main {
 
 /* ===== 响应式 ===== */
 @media (max-width: 900px) {
-  .cards { grid-template-columns: 1fr; }
+  .cards, .cards.three { grid-template-columns: 1fr; }
   .result-layout { grid-template-columns: 1fr; }
   .side { position: static; }
 }

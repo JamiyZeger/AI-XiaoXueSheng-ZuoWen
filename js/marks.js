@@ -123,9 +123,20 @@ window.AEG = window.AEG || {};
     var rnd = AEG.rng.seeded(ann.span.start * 7 + ann.span.end * 13 + ann.type.length);
     var color = colorOf(ann);
     var g = el('g', { 'data-ann': ann.id, class: 'mark-group' });
-    var lines = ann.span.end > ann.span.start
-      ? AEG.handwriting.rectsForSpan(rects, ann.span.start, ann.span.end)
-      : (rects[ann.span.start] ? [{ x: rects[ann.span.start].x, x1: rects[ann.span.start].x, x2: rects[ann.span.start].x, y: rects[ann.span.start].y, top: rects[ann.span.start].y, bottom: rects[ann.span.start].y + rects[ann.span.start].h, midY: rects[ann.span.start].cy, items: [rects[ann.span.start]] }] : []);
+    var lines;
+    if (ann.span.end > ann.span.start) {
+      lines = AEG.handwriting.rectsForSpan(rects, ann.span.start, ann.span.end);
+    } else {
+      // 插入锚点：落在换行位时无矩形 → 回退到前一字符，增补号画在其右侧
+      var r0 = rects[ann.span.start], atEnd = false;
+      if (!r0 && ann.span.start > 0) { r0 = rects[ann.span.start - 1]; atEnd = true; }
+      if (r0) {
+        var px = atEnd ? r0.x + r0.w : r0.x;
+        lines = [{ x: px, x1: px, x2: px, y: r0.y, top: r0.y, bottom: r0.y + r0.h, midY: r0.cy, items: [r0] }];
+      } else {
+        lines = [];
+      }
+    }
 
     if (!lines.length) { return; }
 

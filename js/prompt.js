@@ -126,7 +126,8 @@ window.AEG = window.AEG || {};
     lines.push('请批改下面这篇小学生作文。');
     lines.push('年级：' + submission.grade + ' 年级');
     lines.push('体裁/题目：' + (submission.title || '（无标题）'));
-    if (submission.mode === 'image_prompt') {
+    var isPic = submission.mode === 'image_prompt' || !!submission.imageDataUrl;
+    if (isPic) {
       lines.push('这是看图写话作文，随消息附带一张题目图片。请先认真看图，把看到的内容写进 imageDescription，再结合图片内容批改并评估是否切题；整体评价也要以图片内容为依据。');
     }
     lines.push('');
@@ -138,9 +139,50 @@ window.AEG = window.AEG || {};
     return lines.join('\n');
   }
 
+  /* ================= 作业纸照片识别 ================= */
+
+  var RECOGNIZE_SYSTEM_PROMPT = [
+    '你是一个文字识别助手，负责识别小学生作业纸照片上的手写作文。',
+    '你必须只输出一个 JSON 对象，不要输出任何 JSON 之外的文字（包括不要用 markdown 代码块包裹）。',
+    '',
+    '【输出 JSON 结构】',
+    '{',
+    '  "title": "作文题目（没有就输出空字符串）",',
+    '  "lines": [',
+    '    { "text": "这一行的文字", "bbox": [x1, y1, x2, y2], "page": 1 },',
+    '    ...',
+    '  ]',
+    '}',
+    '',
+    '【识别规则】',
+    '1. 作文可能写在多张纸上，照片按“第 1 张、第 2 张……”随消息附带，但照片顺序不一定正确。' +
+      '请根据每张纸上的页码、字迹和上下文连贯性判断正确页序，按完整作文的阅读顺序逐行输出（例如照片顺序是第 2 张、第 1 张，也要按第 1 张、第 2 张的内容先后输出）。',
+    '2. page 是该行文字所在的照片编号（1~N，即“第几张照片”），必须与 bbox 所属的照片一致。',
+    '3. lines 逐行输出照片中的手写文字（包括题目行，title 与题目行 text 保持一致；没有明显题目则 title 输出 ""）。',
+    '4. 忠实识别：原文怎么写就怎么认，保留错别字、标点误用和语病，绝不改正或润色；实在认不出的字用 □ 代替。',
+    '5. bbox 是该行文字在其所在照片中的位置框 [左, 上, 右, 下]，用 0~1000 的归一化坐标（左上角为原点，x 向右、y 向下；绝不是像素坐标，四个数值都必须在 0~1000 之间），必须贴合该行手写文字的实际位置。',
+    '6. 每行 text 不要包含换行；空行跳过不输出；两张纸接缝处重复拍摄到的内容只输出一次。',
+    '7. 如果照片里没有可识别的作文文字，输出 {"title":"","lines":[]}。'
+  ].join('\n');
+
+  function buildRecognizeUserText(pageCount) {
+    var n = Math.max(1, parseInt(pageCount, 10) || 1);
+    if (n === 1) {
+      return '请识别这张作业纸照片上的手写作文文字，按行输出 text 与 bbox（page 填 1），只输出 JSON 对象。';
+    }
+    return '请识别这 ' + n + ' 张作业纸照片上的手写作文文字。照片顺序可能不正确，请按内容连贯性和页码智能判断正确页序，' +
+      '按完整作文的阅读顺序逐行输出 text、bbox 和 page（page = 该行文字在第几张照片，1~' + n + '），只输出 JSON 对象。';
+  }
+
+  function buildRecognizeSystemPrompt() {
+    return RECOGNIZE_SYSTEM_PROMPT;
+  }
+
   AEG.prompt = {
     buildSystemPrompt: buildSystemPrompt,
     buildUserText: buildUserText,
+    buildRecognizeSystemPrompt: buildRecognizeSystemPrompt,
+    buildRecognizeUserText: buildRecognizeUserText,
     schemaHint: SCHEMA_HINT
   };
 })();

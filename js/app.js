@@ -11,6 +11,9 @@ window.AEG = window.AEG || {};
     submission: null,
     result: null,
     imageDataUrl: '',
+    hwImageDataUrls: [],
+    hwPromptImage: '',
+    hwRec: null,
     abortController: null,
     showStrength: true,
     showError: true,
@@ -63,7 +66,8 @@ window.AEG = window.AEG || {};
     state.view = view;
     var views = {
       home: 'viewHome', write: 'viewWrite', loading: 'viewLoading', result: 'viewResult',
-      history: 'viewHistory', compose: 'viewCompose', composeResult: 'viewComposeResult'
+      history: 'viewHistory', compose: 'viewCompose', composeResult: 'viewComposeResult',
+      homework: 'viewHomework', hwResult: 'viewHomeworkResult'
     };
     for (var k in views) $(views[k]).classList.toggle('hidden', k !== view);
     window.scrollTo(0, 0);
@@ -359,6 +363,290 @@ window.AEG = window.AEG || {};
     }
   }
 
+  /* ================= 作业纸批改流程 ================= */
+
+  function openHomework() {
+    renderHwThumbs();
+    show('homework');
+  }
+
+  /* 多页照片缩略图：可排序（↑↓）、可单张删除 */
+  function renderHwThumbs() {
+    var box = $('hwThumbs');
+    box.innerHTML = '';
+    state.hwImageDataUrls.forEach(function (url, i) {
+      var d = document.createElement('div');
+      d.className = 'hw-thumb';
+      d.innerHTML = '<img src="' + url + '" alt="第 ' + (i + 1) + ' 张">' +
+        '<span class="pg">第 ' + (i + 1) + ' 张</span>' +
+        '<div class="ops">' +
+        '<button class="mini" data-up="' + i + '" title="上移"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+        '<button class="mini" data-down="' + i + '" title="下移"' + (i === state.hwImageDataUrls.length - 1 ? ' disabled' : '') + '>↓</button>' +
+        '<button class="mini del" data-del="' + i + '" title="删除">✕</button>' +
+        '</div>';
+      box.appendChild(d);
+    });
+    var ups = box.querySelectorAll('[data-up]');
+    var downs = box.querySelectorAll('[data-down]');
+    var dels = box.querySelectorAll('[data-del]');
+    function wire(list, attr, fn) {
+      for (var i = 0; i < list.length; i++) {
+        list[i].onclick = function () {
+          fn(parseInt(this.getAttribute(attr), 10));
+        };
+      }
+    }
+    wire(ups, 'data-up', function (i) { moveHwPage(i, -1); });
+    wire(downs, 'data-down', function (i) { moveHwPage(i, 1); });
+    wire(dels, 'data-del', function (i) {
+      state.hwImageDataUrls.splice(i, 1);
+      renderHwThumbs();
+    });
+  }
+
+  function moveHwPage(i, dir) {
+    var a = state.hwImageDataUrls;
+    var j = i + dir;
+    if (j < 0 || j >= a.length) return;
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+    renderHwThumbs();
+  }
+
+  function setHwPromptImage(dataUrl) {
+    state.hwPromptImage = dataUrl || '';
+    var img = $('hwPromptPreview');
+    if (state.hwPromptImage) {
+      img.src = state.hwPromptImage;
+      img.classList.remove('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+    }
+  }
+
+  /* 识别 + 批改一步到位：跳过文字确认，直接出原图批改结果 */
+  function hwRunNow() {
+    if (!AEG.store.settingsReady()) {
+      toast('先到“设置”里配置 API Key / 地址 / 模型名');
+      openSettings();
+      return;
+    }
+    if (!state.hwImageDataUrls.length) {
+      toast('先选作业纸照片（可以一次选几张）');
+      return;
+    }
+    var btn = $('btnHwRun');
+    btn.disabled = true;
+    btn.textContent = '识别并批改中…（约 20~60 秒）';
+    startLoadingAnim();
+    show('loading');
+    state.abortController = new AbortController();
+    var settings = AEG.store.getSettings();
+
+    AEG.homework.recognize(state.hwImageDataUrls, settings, { signal: state.abortController.signal })
+      .then(function (rec) {
+        state.hwRec = rec;
+        // 照片按文章阅读顺序自动重排（page 已同步重映射）
+        if (rec.pages && rec.pages.length) {
+          state.hwImageDataUrls = rec.pages.slice();
+          renderHwThumbs();
+        }
+        var split = AEG.homework.splitTitleLine(rec.title, rec.lines);
+        var lay = AEG.homework.layout(split.bodyLines);
+        if (!lay.content) throw new Error('识别文字为空，无法批改');
+        var sub = {
+          id: 'essay-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+          mode: 'homework',
+          title: split.title || '',
+          content: lay.content,
+          grade: parseInt($('hwGrade').value, 10) || 3,
+          wordCount: lay.content.length,
+          createdAt: new Date().toISOString(),
+          hwEntries: lay.entries,
+          hwPages: state.hwImageDataUrls.slice(),
+          // 看图写话：题目图片（可选），批改时随消息带给模型
+          imageDataUrl: state.hwPromptImage || ''
+        };
+        state.submission = sub;
+        // 原图较大：优先连图保存（历史回看可显示原图），配额不足则不存图降级
+        if (!AEG.store.saveEssay(sub)) AEG.store.saveEssay(stripImage(sub));
+        return AEG.llm.gradeEssay(sub, settings, { signal: state.abortController.signal })
+          .then(function (result) {
+            stopLoadingAnim();
+            AEG.store.saveCorrection(result);
+            openResult(sub, result);
+          });
+      })
+      .catch(function (err) {
+        stopLoadingAnim();
+        show('homework');
+        if (err && err.visionNotice) {
+          alert(err.message);
+          return;
+        }
+        toast(err && err.message ? err.message.split('\n')[0] : '识别/批改失败');
+        if (err && err.message && err.message.indexOf('CORS') >= 0) {
+          alert(err.message);
+        }
+      })
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = '识别并批改';
+      });
+  }
+
+  /* 重新批改：用已识别的文字再批一次（不重新识别） */
+  function hwRegradeNow() {
+    var sub = state.submission;
+    if (!sub || sub.mode !== 'homework') return;
+    startLoadingAnim();
+    show('loading');
+    state.abortController = new AbortController();
+    AEG.llm.gradeEssay(sub, AEG.store.getSettings(), { signal: state.abortController.signal })
+      .then(function (result) {
+        stopLoadingAnim();
+        AEG.store.saveCorrection(result);
+        openResult(sub, result);
+      })
+      .catch(function (err) {
+        stopLoadingAnim();
+        show('hwResult');
+        if (err && err.visionNotice) {
+          alert(err.message);
+          return;
+        }
+        toast(err && err.message ? err.message.split('\n')[0] : '批改失败');
+      });
+  }
+
+  /* 取作业纸照片页列表（兼容旧记录的单图字段） */
+  function hwPagesOf(sub) {
+    if (sub.hwPages && sub.hwPages.length) return sub.hwPages.slice();
+    if (sub.hwImageDataUrl) return [sub.hwImageDataUrl];
+    return [];
+  }
+
+  /* 批改前/后：统一显示或隐藏全部页的批注层 */
+  function setPhotoMarksVisible(visible) {
+    var svgs = $('photoStack').querySelectorAll('svg.photo-marks');
+    for (var i = 0; i < svgs.length; i++) {
+      svgs[i].style.display = visible ? '' : 'none';
+    }
+  }
+
+  /* 原图 + SVG 批注叠加渲染（多页：每张照片一个批注层，批注按 page 归属） */
+  function renderPhotoMarks() {
+    var sub = state.submission, r = state.result;
+    if (!sub || !sub.hwEntries) return;
+    var pages = hwPagesOf(sub);
+    if (!pages.length) return;
+    var stack = $('photoStack');
+    stack.innerHTML = '';
+    var filtered = r.annotations.filter(function (a) {
+      if (a.category === 'strength') return state.showStrength;
+      return state.showError;
+    });
+    pages.forEach(function (url, pi) {
+      var page = pi + 1;
+      var wrap = document.createElement('div');
+      wrap.className = 'photo-wrap';
+      var img = document.createElement('img');
+      img.className = 'photo-img';
+      img.alt = '作业纸照片 第 ' + page + ' 张';
+      img.src = url;
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'photo-marks');
+      svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      wrap.appendChild(img);
+      wrap.appendChild(svg);
+      if (pages.length > 1) {
+        var badge = document.createElement('span');
+        badge.className = 'photo-badge';
+        badge.textContent = '第 ' + page + ' 页';
+        wrap.appendChild(badge);
+      }
+      stack.appendChild(wrap);
+      var draw = function () {
+        AEG.homework.drawOnPhoto(svg, filtered, sub.hwEntries,
+          img.naturalWidth || 1000, img.naturalHeight || 1000, sub.content, page);
+        if ($('hwTgBefore').classList.contains('on')) svg.style.display = 'none';
+      };
+      if (img.complete && img.naturalWidth) draw();
+      else img.onload = draw;
+    });
+  }
+
+  /* 把全部页的批注合成到照片上，竖向拼成一张 PNG 下载 */
+  function saveAnnotatedPhoto() {
+    var sub = state.submission;
+    var wraps = $('photoStack').querySelectorAll('.photo-wrap');
+    if (!sub || !wraps.length) { toast('照片还没加载好'); return; }
+    var items = [];
+    for (var i = 0; i < wraps.length; i++) {
+      items.push({
+        img: wraps[i].querySelector('img'),
+        svg: wraps[i].querySelector('svg.photo-marks')
+      });
+    }
+    if (!items[0].img.naturalWidth) { toast('照片还没加载好'); return; }
+
+    var maxW = 0, totalH = 0;
+    items.forEach(function (it) {
+      var w = it.img.naturalWidth, h = it.img.naturalHeight;
+      if (w > maxW) maxW = w;
+    });
+    items.forEach(function (it) {
+      totalH += Math.round(maxW * it.img.naturalHeight / it.img.naturalWidth);
+    });
+    var canvas = document.createElement('canvas');
+    canvas.width = maxW;
+    canvas.height = totalH;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, maxW, totalH);
+
+    var idx = 0, y = 0;
+    function next() {
+      if (idx >= items.length) {
+        canvas.toBlob(function (blob) {
+          if (!blob) { toast('批注图导出失败'); return; }
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = '作业纸批改-' + Date.now() + '.png';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function () {
+            URL.revokeObjectURL(a.href);
+            document.body.removeChild(a);
+          }, 200);
+          toast('批注图已保存');
+        }, 'image/png');
+        return;
+      }
+      var it = items[idx];
+      var w = it.img.naturalWidth, h = it.img.naturalHeight;
+      var dw = maxW, dh = Math.round(maxW * h / w);
+      ctx.drawImage(it.img, 0, y, dw, dh);
+      var clone = it.svg.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      var svgStr = new XMLSerializer().serializeToString(clone);
+      var overlay = new Image();
+      overlay.onload = function () {
+        ctx.drawImage(overlay, 0, y, dw, dh);
+        y += dh;
+        idx++;
+        next();
+      };
+      overlay.onerror = function () {
+        y += dh;
+        idx++;
+        next();
+      };
+      overlay.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+    }
+    next();
+  }
+
   /* ================= 批改流程 ================= */
 
   function buildSubmission() {
@@ -440,6 +728,8 @@ window.AEG = window.AEG || {};
     var copy = {};
     for (var k in sub) copy[k] = sub[k];
     if (copy.imageDataUrl) copy.imageDataUrl = '';
+    if (copy.hwImageDataUrl) copy.hwImageDataUrl = '';
+    if (copy.hwPages) copy.hwPages = [];
     return copy;
   }
 
@@ -479,25 +769,42 @@ window.AEG = window.AEG || {};
   function openResult(submission, result) {
     state.submission = submission;
     state.result = result;
-    $('resultTitle').textContent = (submission.title || '无标题') + ' · 批改结果';
+    var isHwPhoto = submission.mode === 'homework' && hwPagesOf(submission).length > 0;
+    var titleEl = isHwPhoto ? $('hwResultTitle') : $('resultTitle');
+    var leadEl = isHwPhoto ? $('hwResultLead') : $('resultLead');
+    titleEl.textContent = (submission.title || '无标题') + (isHwPhoto ? ' · 作业纸批改结果' : ' · 批改结果');
     var lead = submission.grade + ' 年级 · ' + submission.wordCount + ' 字 · ' + fmtTime(result.createdAt);
+    if (submission.mode === 'homework') {
+      var nPages = hwPagesOf(submission).length;
+      if (nPages > 1) lead = nPages + ' 张照片 · ' + lead;
+      if (submission.imageDataUrl) lead += ' · 看图写话';
+    }
     if (result.model.indexOf('demo') >= 0) lead += ' · 内置示例';
     if (result.status === 'degraded') lead += ' · 本次仅给出整体评价（结构化批注降级）';
     else if (result.status === 'partial') lead += ' · 部分批注未能精确落位';
-    $('resultLead').textContent = lead;
+    leadEl.textContent = lead;
 
     state.showStrength = true;
     state.showError = true;
     state.compareMode = false;
-    $('ckStrength').checked = true;
-    $('ckError').checked = true;
-    $('tgBefore').classList.remove('on');
-    $('tgAfter').classList.add('on');
-    $('tgCompare').classList.remove('on');
-    $('cmpSliderWrap').classList.add('hidden');
 
-    show('result');
-    renderHandwritingAndMarks();
+    if (isHwPhoto) {
+      $('hwCkStrength').checked = true;
+      $('hwCkError').checked = true;
+      $('hwTgBefore').classList.remove('on');
+      $('hwTgAfter').classList.add('on');
+      show('hwResult');
+      renderPhotoMarks();
+    } else {
+      $('ckStrength').checked = true;
+      $('ckError').checked = true;
+      $('tgBefore').classList.remove('on');
+      $('tgAfter').classList.add('on');
+      $('tgCompare').classList.remove('on');
+      $('cmpSliderWrap').classList.add('hidden');
+      show('result');
+      renderHandwritingAndMarks();
+    }
     renderSidePanel();
   }
 
@@ -537,6 +844,18 @@ window.AEG = window.AEG || {};
     grammar: '语法/搭配', punctuation: '标点', delete: '删去',
     insert: '增补', replace: '替换', transpose: '语序'
   };
+
+  /* 结果页与作业纸批改页共用侧栏/批注层逻辑，按当前视图取对应元素 */
+  function marksLayerEls() {
+    if (state.view === 'hwResult') {
+      var svgs = $('photoStack').querySelectorAll('svg.photo-marks');
+      return Array.prototype.slice.call(svgs);
+    }
+    return [$('marksLayer')];
+  }
+  function sidePanelEl() {
+    return state.view === 'hwResult' ? $('hwSidePanel') : $('sidePanel');
+  }
 
   function renderSidePanel() {
     var r = state.result;
@@ -593,9 +912,9 @@ window.AEG = window.AEG || {};
         '<pre class="raw-text">' + esc(r.rawText) + '</pre></div>';
     }
 
-    $('sidePanel').innerHTML = html;
+    sidePanelEl().innerHTML = html;
 
-    var items = $('sidePanel').querySelectorAll('.ann-item');
+    var items = sidePanelEl().querySelectorAll('.ann-item');
     for (var i = 0; i < items.length; i++) {
       items[i].onclick = onAnnCardClick;
     }
@@ -618,16 +937,22 @@ window.AEG = window.AEG || {};
   function onAnnCardClick(e) {
     var card = e.currentTarget;
     var id = card.getAttribute('data-ann');
-    var items = $('sidePanel').querySelectorAll('.ann-item');
+    var items = sidePanelEl().querySelectorAll('.ann-item');
     for (var i = 0; i < items.length; i++) items[i].classList.remove('active');
     card.classList.add('active');
-    var groups = $('marksLayer').querySelectorAll('.mark-group');
-    for (var g = 0; g < groups.length; g++) {
-      var isTarget = groups[g].getAttribute('data-ann') === id;
-      groups[g].classList.toggle('active', isTarget);
-      groups[g].classList.toggle('dim', !isTarget);
+    var layers = marksLayerEls();
+    var groups = [];
+    var target = null;
+    for (var li = 0; li < layers.length; li++) {
+      var gs = layers[li].querySelectorAll('.mark-group');
+      for (var g = 0; g < gs.length; g++) {
+        groups.push(gs[g]);
+        var isTarget = gs[g].getAttribute('data-ann') === id;
+        gs[g].classList.toggle('active', isTarget);
+        gs[g].classList.toggle('dim', !isTarget);
+        if (isTarget && !target) target = gs[g];
+      }
     }
-    var target = $('marksLayer').querySelector('[data-ann="' + id + '"]');
     if (target) {
       var y = target.getBoundingClientRect().top + window.scrollY - 160;
       window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
@@ -690,7 +1015,9 @@ window.AEG = window.AEG || {};
     wireHistButtons(box);
   }
 
-  function TYPE_MODE(m) { return m === 'image_prompt' ? '看图写话' : '纯文字'; }
+  function TYPE_MODE(m) {
+    return m === 'image_prompt' ? '看图写话' : (m === 'homework' ? '作业纸批改' : '纯文字');
+  }
 
   function renderHistory() {
     var all = AEG.store.listCorrections();
@@ -748,6 +1075,7 @@ window.AEG = window.AEG || {};
     $('navSettings').onclick = openSettings;
     $('navWrite').onclick = function () { openWrite('text'); };
     $('navCompose').onclick = openCompose;
+    $('navHomework').onclick = openHomework;
     $('warnGoSettings').onclick = openSettings;
 
     $('cardText').onclick = function () { openWrite('text'); };
@@ -755,6 +1083,7 @@ window.AEG = window.AEG || {};
     $('cardDemoText').onclick = function () { runDemo('text'); };
     $('cardDemoImage').onclick = function () { runDemo('image_prompt'); };
     $('cardCompose').onclick = openCompose;
+    $('cardHomework').onclick = openHomework;
     $('homeMoreHist').onclick = function () { show('history'); };
 
     $('btnCompose').onclick = composeNow;
@@ -817,11 +1146,72 @@ window.AEG = window.AEG || {};
       this.value = '';
     };
 
+    // 作业纸批改
+    $('btnHwUpload').onclick = function () { $('hwFile').click(); };
+    $('btnHwClear').onclick = function () {
+      state.hwImageDataUrls = [];
+      renderHwThumbs();
+    };
+    $('hwFile').onchange = function () {
+      var files = Array.prototype.slice.call(this.files || []);
+      this.value = '';
+      if (!files.length) return;
+      var ok = 0, done = 0;
+      files.forEach(function (f) {
+        compressImage(f).then(function (url) {
+          state.hwImageDataUrls.push(url);
+          ok++;
+        }).catch(function () { /* 单张失败忽略 */ }).then(function () {
+          done++;
+          if (done === files.length) {
+            renderHwThumbs();
+            toast(ok ? ('已添加 ' + ok + ' 张照片') : '照片处理失败');
+          }
+        });
+      });
+    };
+    $('btnHwPromptImg').onclick = function () { $('hwPromptFile').click(); };
+    $('btnHwClearPrompt').onclick = function () { setHwPromptImage(''); };
+    $('hwPromptFile').onchange = function () {
+      var f = this.files && this.files[0];
+      if (!f) return;
+      compressImage(f).then(function (url) {
+        setHwPromptImage(url);
+        toast('题目图片已就绪（看图写话）');
+      }).catch(function (err) {
+        toast(err.message || '图片处理失败');
+      });
+      this.value = '';
+    };
+    $('btnHwRun').onclick = hwRunNow;
+    $('btnHwReRecognize').onclick = hwRunNow;
+    $('btnHwBackHome').onclick = function () { show('home'); };
+    $('btnHwBackHome3').onclick = function () { show('home'); };
+    $('btnHwSave').onclick = saveAnnotatedPhoto;
+    $('btnHwRegrade').onclick = hwRegradeNow;
+    $('hwTgBefore').onclick = function () {
+      setPhotoMarksVisible(false);
+      $('hwTgBefore').classList.add('on');
+      $('hwTgAfter').classList.remove('on');
+    };
+    $('hwTgAfter').onclick = function () {
+      setPhotoMarksVisible(true);
+      $('hwTgBefore').classList.remove('on');
+      $('hwTgAfter').classList.add('on');
+    };
+    $('hwCkStrength').onchange = function () {
+      state.showStrength = this.checked;
+      renderPhotoMarks();
+    };
+    $('hwCkError').onchange = function () {
+      state.showError = this.checked;
+      renderPhotoMarks();
+    };
+
     $('btnGrade').onclick = gradeNow;
     $('btnCancelGrade').onclick = function () {
       if (state.abortController) state.abortController.abort();
-    };
-    $('btnRegrade').onclick = function () {
+    };    $('btnRegrade').onclick = function () {
       if (!state.submission) return;
       $('inTitle').value = state.submission.title || '';
       $('inContent').value = state.submission.content || '';

@@ -14,6 +14,7 @@
     <button id="navHome">首页</button>
     <button id="navCompose" class="primary">写作文</button>
     <button id="navWrite" class="primary">批改作文</button>
+    <button id="navHomework" class="primary">作业纸批改</button>
     <button id="navHistory">历史</button>
     <button id="navSettings">设置</button>
   </nav>
@@ -29,7 +30,7 @@
   <!-- ===== 首页 ===== -->
   <section id="viewHome" class="view">
     <h1>今天想写一篇，还是批改一篇？</h1>
-    <p class="lead">两大功能互相独立：想让 AI 直接写，用「写作文」；已经写好的作文要点评修改，用「批改作文」。</p>
+    <p class="lead">写作文让 AI 直接写一篇；批改作文有三种方式：粘贴文字、看图写话、作业纸拍照批改。</p>
 
     <div class="section-title feature">
       <span class="ft-badge compose">写作文</span>
@@ -47,7 +48,7 @@
       <span class="ft-badge grade">批改作文</span>
       <span class="ft-desc">写好的作文交给 AI 老师，在手写稿上画批注、写评语</span>
     </div>
-    <div class="cards">
+    <div class="cards three">
       <div class="card" id="cardText">
         <span class="tag">批改模式一</span>
         <h3>纯文字批改</h3>
@@ -57,6 +58,11 @@
         <span class="tag">批改模式二</span>
         <h3>看图写话批改</h3>
         <p>上传题目图片（或选内置示例图），AI 会结合图片内容批改，还会告诉你有没有把图里的内容写全。</p>
+      </div>
+      <div class="card" id="cardHomework">
+        <span class="tag">批改模式三</span>
+        <h3>作业纸批改</h3>
+        <p>把写在作业本上的作文拍照发上来，AI 识别手写文字后，直接在照片原图上画批改符号，就像老师用红笔批改一样。</p>
       </div>
     </div>
 
@@ -300,6 +306,92 @@
     </div>
   </section>
 
+  <!-- ===== 作业纸批改：上传照片 ===== -->
+  <section id="viewHomework" class="view hidden">
+    <h1>作业纸批改</h1>
+    <p class="lead">把写在作业本上的作文拍下来（一张或几张纸都行），AI 识别手写文字后直接批改——照片乱序也会智能排对——批注就像老师用红笔一样画在每张照片上。</p>
+
+    <div class="form-panel">
+      <div class="field">
+        <label>作业纸照片（作文写在几张纸上就选几张，可分次添加）</label>
+        <div class="btn-row" style="margin-top:6px">
+          <button class="btn" id="btnHwUpload">选择 / 拍摄照片</button>
+          <button class="btn ghost" id="btnHwClear">全部移除</button>
+          <input type="file" id="hwFile" accept="image/*" multiple class="hidden">
+        </div>
+        <div class="hw-thumbs" id="hwThumbs"></div>
+      </div>
+
+      <div class="field">
+        <label>题目图片（可选：这是看图写话作业时，把题目图片也传上来，AI 会结合图片内容批改）</label>
+        <div class="btn-row" style="margin-top:6px">
+          <button class="btn" id="btnHwPromptImg">选择题目图片</button>
+          <button class="btn ghost" id="btnHwClearPrompt">移除题目图片</button>
+          <input type="file" id="hwPromptFile" accept="image/*" class="hidden">
+        </div>
+        <img id="hwPromptPreview" class="img-preview hidden" alt="题目图片预览">
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="hwGrade">年级</label>
+          <select id="hwGrade">
+            <option value="1">一年级</option>
+            <option value="2">二年级</option>
+            <option value="3" selected>三年级</option>
+            <option value="4">四年级</option>
+            <option value="5">五年级</option>
+            <option value="6">六年级</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary" id="btnHwRun">识别并批改</button>
+        <button class="btn ghost" id="btnHwBackHome">返回首页</button>
+      </div>
+      <p class="hint" style="margin-top:10px">拍照小技巧：正对纸面、光线充足、字迹完整，识别更准。照片按什么顺序拍都没关系——AI 会按内容和页码判断文章顺序，结果页的照片自动按文章顺序排列（也可点缩略图上的 ↑↓ 手动排序）。识别手写字需要模型支持看图（多模态），不支持时会直接提示。</p>
+    </div>
+  </section>
+
+  <!-- ===== 作业纸批改：原图批注结果 ===== -->
+  <section id="viewHomeworkResult" class="view hidden">
+    <h1 id="hwResultTitle">作业纸批改结果</h1>
+    <p class="lead" id="hwResultLead"></p>
+
+    <div class="result-layout">
+      <div>
+        <div class="toolbar">
+          <div class="toggle-group">
+            <button id="hwTgBefore">批改前</button>
+            <button id="hwTgAfter" class="on">批改后</button>
+          </div>
+          <div class="sep"></div>
+          <label><input type="checkbox" id="hwCkStrength" checked> 好词好句</label>
+          <label><input type="checkbox" id="hwCkError" checked> 错误标注</label>
+          <div class="sep"></div>
+          <button class="btn" id="btnHwSave">保存批注图</button>
+          <button class="btn" id="btnHwRegrade">重新批改</button>
+          <button class="btn" id="btnHwReRecognize">重新识别</button>
+          <button class="btn ghost" id="btnHwBackHome3">返回首页</button>
+        </div>
+
+        <div class="paper-wrap">
+          <div class="photo-stack" id="photoStack"></div>
+        </div>
+
+        <div class="legend">
+          <span class="it"><span class="sw" style="background:#185FA5"></span>波浪线 = 好词好句</span>
+          <span class="it"><span class="sw" style="background:#D85A30"></span>橙色符号 = 修改建议</span>
+          <span class="it"><span class="sw" style="background:#7F5AA8"></span>紫色圈 = 标点问题</span>
+          <span class="it">点右侧卡片可定位到照片上位置</span>
+        </div>
+      </div>
+
+      <aside class="side" id="hwSidePanel"></aside>
+    </div>
+  </section>
+
 </main>
 
 <!-- ===== 设置抽屉 ===== -->
@@ -380,6 +472,7 @@
 <script src="js/prompt.js"></script>
 <script src="js/llm.js"></script>
 <script src="js/compose.js"></script>
+<script src="js/homework.js"></script>
 <script src="js/handwriting.js"></script>
 <script src="js/marks.js"></script>
 <script src="js/demo.js"></script>

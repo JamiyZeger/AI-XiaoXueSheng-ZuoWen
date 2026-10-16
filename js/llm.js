@@ -178,20 +178,46 @@ window.AEG = window.AEG || {};
 
   /* ================= 批注对齐与归一化 ================= */
 
-  /* 按 quote 精确检索校准 offset：返回 {start,end,text} 或 null */
+  /* 按 quote 检索校准 offset：返回 {start,end,text} 或 null。
+     先精确匹配；失败再宽松匹配——□（识别不出的字）双方互为通配，忽略空白/换行差异。
+     多处出现时取离 approxStart 最近的一处（start 允许是数字字符串）。 */
+  function regexEscape(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function loosePositions(content, quote) {
+    var parts = [];
+    for (var i = 0; i < quote.length; i++) {
+      var q = quote.charAt(i);
+      if (q === '□') parts.push('[\\s\\S]');
+      else if (/\s/.test(q)) parts.push('\\s*');
+      else parts.push('(?:' + regexEscape(q) + '|□)');
+    }
+    var re;
+    try { re = new RegExp(parts.join('\\s*'), 'g'); } catch (e) { return []; }
+    var out = [], m;
+    while ((m = re.exec(content)) !== null) {
+      out.push({ start: m.index, end: m.index + m[0].length });
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+    return out;
+  }
+
   function alignQuote(content, quote, approxStart) {
     if (!quote) return null;
+    var approx = (typeof approxStart === 'number' && isFinite(approxStart)) ? approxStart
+      : (isFinite(parseInt(approxStart, 10)) ? parseInt(approxStart, 10) : 0);
     var positions = [];
     var i = content.indexOf(quote);
-    while (i !== -1) { positions.push(i); i = content.indexOf(quote, i + 1); }
+    while (i !== -1) { positions.push({ start: i, end: i + quote.length }); i = content.indexOf(quote, i + 1); }
+    if (!positions.length) positions = loosePositions(content, quote);
     if (!positions.length) return null;
-    var approx = typeof approxStart === 'number' ? approxStart : 0;
-    var best = positions[0], bd = Math.abs(best - approx);
+    var best = positions[0], bd = Math.abs(best.start - approx);
     for (var k = 1; k < positions.length; k++) {
-      var d = Math.abs(positions[k] - approx);
+      var d = Math.abs(positions[k].start - approx);
       if (d < bd) { bd = d; best = positions[k]; }
     }
-    return { start: best, end: best + quote.length, text: quote };
+    return { start: best.start, end: best.end, text: content.slice(best.start, best.end) };
   }
 
   var MARK_DEFAULT = {
@@ -404,7 +430,9 @@ window.AEG = window.AEG || {};
 
   function gradeEssay(submission, settings, opts) {
     opts = opts || {};
-    var isPicture = submission.mode === 'image_prompt';
+    // 看图写话：纯看图模式，或作业纸批改附带了题目图片
+    var isPicture = submission.mode === 'image_prompt' ||
+      (submission.mode === 'homework' && !!submission.imageDataUrl);
     var model = isPicture
       ? (settings.visionModel || settings.chatModel)
       : settings.chatModel;
