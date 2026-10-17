@@ -81,7 +81,7 @@ window.AEG = window.AEG || {};
       x: x.toFixed(1), y: y.toFixed(1),
       'font-size': '17', fill: color, stroke: '#FFFDF7',
       'stroke-width': '3.5', 'paint-order': 'stroke',
-      'font-family': "'Ma Shan Zheng','Xingkai SC','Kaiti SC','STKaiti','KaiTi',cursive"
+      'font-family': "'LXGW WenKai Lite','Xingkai SC','Kaiti SC','STKaiti','KaiTi',cursive"
     });
     t.textContent = text;
     group.appendChild(t);
